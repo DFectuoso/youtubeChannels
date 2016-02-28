@@ -1,0 +1,216 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta http-equiv="X-UA-Compatible" content="IE=edge">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <link rel="stylesheet" href="https://maxcdn.bootstrapcdn.com/bootstrap/3.3.6/css/bootstrap.min.css" integrity="sha384-1q8mTJOASx8j1Au+a5WDVnPi2lkFfwwEAa8hDDdjZlpLegxhjVME1fgjWPGmkzs7" crossorigin="anonymous">
+
+    <!-- Optional theme -->
+    <link rel="stylesheet" href="https://maxcdn.bootstrapcdn.com/bootstrap/3.3.6/css/bootstrap-theme.min.css" integrity="sha384-fLW2N01lMqjakBkx3l/M9EahuwpSfeNvV63J5ezn3uZzapT0u7EYsXMjQV+0En5r" crossorigin="anonymous">
+
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jquery/2.0.3/jquery.js"></script>
+    <script src="http://ajax.cdnjs.com/ajax/libs/json2/20110223/json2.js"></script>
+    <script src="http://cdnjs.cloudflare.com/ajax/libs/underscore.js/1.5.2/underscore.js"></script>
+    <script src="http://cdnjs.cloudflare.com/ajax/libs/backbone.js/1.1.0/backbone-min.js"></script>
+    <script>
+    var User, Users, users;
+    var Channel, Channels, channels;
+
+
+    $( document ).ready(function() {
+      // Model
+      User = Backbone.Model.extend({
+        defaults:{
+          subscriptions: 0,
+          finished : false
+        }
+      });
+
+      // Collection
+      Users = Backbone.Collection.extend({
+        model: User
+      });
+
+      // Model
+      Channel = Backbone.Model.extend({
+        defaults:{
+          count: 1,
+        }
+      });
+
+      // Collection
+      Channels = Backbone.Collection.extend({
+        model: Channel
+      });
+
+
+      window.users = new Users();
+      window.channels = new Channels();
+      window.channels.comparator  = function(model) {
+        return -1 * model.get('count');
+      }
+
+
+
+      var UserView = Backbone.View.extend({
+        tagName: 'li', // name of (orphan) root tag in this.el
+        initialize: function(){
+          _.bindAll(this, 'render'); // every function that uses 'this' as the current object should be in here
+          this.model.bind('change', this.render);
+        },
+        render: function(){
+          var bold = "";
+          if(this.model.get("finished")){
+            bold = "class='bold'"
+          }
+          var number = (this.model.get("subscriptions"))?(this.model.get("subscriptions")):(this.model.get("count"));
+
+          $(this.el).html('<span ' + bold + ' ><a href="https://www.youtube.com/channel/'+this.model.get('channelId')+'" target="_blank">'+this.model.get('title')+' ('+number+')</a></span>');
+          return this; // for chainable calls, like .render().el
+        }
+      });
+
+      window.generateUserViewForCollection = function(collection){
+        var c = collection
+        var View = Backbone.View.extend({
+            initialize: function(){
+              _.bindAll(this, 'render', 'appendItem'); // every function that uses 'this' as the current object should be in here
+              c.bind('add', this.appendItem); // collection event binder
+              this.render();
+            },
+            render: function(){
+              var self = this;
+               $(this.el).append("<ul></ul>");
+               _(c.models).each(function(item){ // in case collection is not empty
+                 self.appendItem(item);
+               }, this);
+            },
+            appendItem: function(item){
+              if(item.get("count")){
+                if(item.get("count") < 15){
+                  return
+                }
+              }
+              var itemView = new UserView({
+                model: item
+              });
+              $('ul', this.el).append(itemView.render().el);
+            }
+        });
+
+        return new View();
+      }
+
+
+
+      window.channelsView = generateUserViewForCollection(channels);
+      $('#channels').append( window.channelsView.el )
+
+      window.usersView = generateUserViewForCollection(users);
+      $('#users').append( window.usersView.el )
+
+    });
+
+    function getChannels(user, pagetoken){
+      gapi.client.youtube.subscriptions.list({part:"snippet",channelId:user.get("channelId"), pageToken : pagetoken}).then(
+        function(response){
+          /// va a tener el "canal" response.result.items
+
+          // Increment subscription count
+          user.set("subscriptions", user.get("subscriptions") + response.result.items.length);
+
+          for(var i = 0; i < response.result.items.length; i++){
+            var channelArray = response.result.items[i]
+            var previous = _.find(window.channels.models, function(c){ return c.get("channelId") === channelArray.snippet.resourceId.channelId})
+            if(previous){
+              previous.set("count", previous.get("count") + 1)
+            } else {
+              var channel = new Channel();
+              channel.set({
+                channelId: channelArray.snippet.resourceId.channelId,
+                title: channelArray.snippet.title,
+                thumbnails: channelArray.snippet.thumbnails.url,
+              });
+              channels.add(channel)
+            }
+
+          }
+
+
+
+
+          if(response.result.nextPageToken !== undefined){
+            getChannels(user, response.result.nextPageToken)
+          } else {
+            user.set("finished", true);
+            channels.sort();
+
+            window.channelsView.remove()
+            window.channelsView = generateUserViewForCollection(channels);
+            $('#channels').append( window.channelsView.el )
+
+          }
+        },
+        function(reason) {
+          console.log('Error: ' + reason.result.error.message);
+        })
+    }
+
+    function getSubscribers(pageToken) {
+      var filter = {part:"subscriberSnippet", mySubscribers: true, pageToken : pageToken}
+      gapi.client.youtube.subscriptions.list(filter).then(
+        function(response){
+          for(var i = 0; i < response.result.items.length; i++){
+            var subscriber = response.result.items[i]
+            var user = new User();
+            user.set({
+              channelId: subscriber.subscriberSnippet.channelId,
+              title: subscriber.subscriberSnippet.title,
+              thumbnails: subscriber.subscriberSnippet.thumbnails.url,
+            });
+            users.add(user)
+            getChannels(user)
+          }
+
+          if(response.result.nextPageToken !== undefined){
+            getSubscribers(response.result.nextPageToken)
+          }
+
+        },
+        function(reason) {
+          console.log('Error: ' + reason.result.error.message);
+        }
+      )
+    }
+
+    function auth() {
+        var config = {
+          'client_id': '459591735580-2jf6vo9n7jvl2cdmd1cg7dpr2ptbusbt.apps.googleusercontent.com',
+          'scope': 'https://www.googleapis.com/auth/youtube'
+        };
+        gapi.auth.authorize(config, function() {
+          console.log('login complete');
+          gapi.client.load('youtube', 'v3').then(getSubscribers);
+        });
+    }
+
+
+
+    </script>
+    <script src="https://apis.google.com/js/client.js?onload=auth"></script>
+    <style>
+      .bold{ font-weight: bold;}
+    </style>
+  </head>
+  <body>
+
+    <div class="container">
+      <div class="row">
+        <div id="users" class="col-md-6 col-sm-6"><h1>Users</h1></div>
+        <div id="channels" class="col-md-6 col-sm-6"><h1>Channels</h1></div>
+      </div>
+    </div>
+
+  </body>
+</html>

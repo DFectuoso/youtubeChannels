@@ -1,0 +1,5 @@
+Un proyecto sencillo usando el la libreria de javascript de Google APIs para sacar la lista de suscriptores de un canal y despues encontrar otros canales que esos suscriptores siguen!
+
+
+Es necesario servir este archivo usando un servidor de http y que el token de Google tenga de alta el dominio que vas a usar
+
